@@ -18,7 +18,10 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(PLUGIN_SDK_DIR "B:/plugin-sdk-master")
+# 设置一个默认路径，但允许用户在配置时修改
+if(NOT DEFINED PLUGIN_SDK_DIR)
+    set(PLUGIN_SDK_DIR "B:/plugin-sdk-master" CACHE PATH "Path to the GTA SA Plugin SDK")
+endif()
 
 add_library(HairPhysicsASI SHARED
     src/main.cpp
