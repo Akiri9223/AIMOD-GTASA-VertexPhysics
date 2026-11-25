@@ -10,4 +10,13 @@
 顶点色规则：R=0x40 头发 / R=0x80 布料 / R=0xC0 身体 / 未着色=刚性，G=软度，B=锚定强度（B=0 为硬锚定）；
 
 # Cloth Physics
-<img width="480" height="270" alt="2026-11-26 05-35-06" src="https://github.com/user-attachments/assets/b327a1ae-6a7e-49f1-9726-ea80ef300e8e" />
+<img width="480" height="270" alt="2026-11-2605-34-15-ezgif com-optimize" src="https://github.com/user-attachments/assets/3b675547-c9da-477b-9369-6f86cad04125" />
+<img width="480" height="270" alt="2026-11-2605-30-50-ezgif com-optimize" src="https://github.com/user-attachments/assets/3865526a-39e7-4e47-9961-2b28aab0b620" />
+<img width="480" height="270" alt="2026-11-2605-30-29-ezgif com-optimize" src="https://github.com/user-attachments/assets/6217cafd-5761-4338-9c28-dc30cc9ad91b" />
+<img width="480" height="270" alt="2026-11-26 05-33-51" src="https://github.com/user-attachments/assets/b73585f4-0e76-486a-89dc-9fb0ac196044" />
+<img width="480" height="270" alt="2026-11-26 05-32-29" src="https://github.com/user-attachments/assets/d929a961-6fe1-47a9-90c8-b6d7cb11a361" />
+<img width="480" height="270" alt="2026-11-26 05-32-06" src="https://github.com/user-attachments/assets/f5b9a6ac-c548-4f82-b4e0-4ca4d13c844a" />
+<img width="480" height="270" alt="2026-11-26 05-30-01" src="https://github.com/user-attachments/assets/0d82089f-7081-48cb-ba13-5ea899d2c15f" />
+<img width="480" height="270" alt="2026-11-26 05-35-06" src="https://github.com/user-attachments/assets/1d293d33-1775-4332-91bf-ab8c912d022e" />
+
+
