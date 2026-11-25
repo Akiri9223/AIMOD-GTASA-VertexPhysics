@@ -3,7 +3,7 @@
 > 给人物、车辆、地图物件加上 **头发 / 布料 / 身体软组织** 的顶点物理。
 > 物理数据可以来自模型顶点色，也可以来自外部 `.dat` 文件（推荐，模型不会被染色）。
 
-版本：ASI v1.0（本文档对应源码状态） / Blender 插件 v1.6.0
+版本：ASI v1.2（布料垂坠 + 软挂点） / Blender 插件 v1.6.0
 适用：GTA San Andreas 1.0 US（MSVC x86 编译，输出 `.asi`）
 
 ---
@@ -20,6 +20,7 @@
 8. [Blender 插件教程](#8-blender-插件教程)
 9. [多部件模型（车辆）](#9-多部件模型车辆)
 10. [支持的模型类型 × 物理类型](#10-支持的模型类型--物理类型)
+10.5. [身体物理（Body）：不同区域为什么往不同方向抖](#105-身体物理body不同区域为什么往不同方向抖)
 11. [日志与排错](#11-日志与排错)
 12. [已知限制（引擎层面）](#12-已知限制引擎层面)
 13. [性能建议](#13-性能建议)
@@ -60,12 +61,12 @@
 ### 2.1 ASI
 
 1. 确认已安装 **CLEO**（提供 `.asi` 加载）或任何 ASI Loader；
-2. 把 `Vertex Physics mod` 放到：
+2. 把 `VertexPhysics.asi` 放到：
 
    ```
-   <游戏目录>\modloader\
+   <游戏目录>\modloader\<任意文件夹>\
    ```
-   例如 `A:\Vanilla GTASA\modloader\Vertex Physics mod`
+   例如 `A:\Vanilla GTASA\modloader\新建文件夹\VertexPhysics.asi`
 3. 启动游戏 → 首次运行会在游戏目录生成配置与日志。
 
 ### 2.2 目录结构
@@ -81,12 +82,14 @@
 │   │   └─ wheel.dat
 │   └─ dump\                     ← dumpGeometry=1 时导出的几何体
 │       └─ wfyro_1094.txt
+├─ vertexphysics.log                ← 主日志（模型扫描/dat/渲染）
+└─ vertexphysics_physics.log             ← 物理日志（颜色分类/步进）
 ```
 
 ### 2.3 Blender 插件
 
 1. Blender → **编辑 → 偏好设置 → 插件 → 安装…**；
-2. 选择 `blender vertexphysics addon.py`；
+2. 选择 `vertexphysics_exporter.py`；
 3. 勾选启用 **VertexPhysics Exporter**；
 4. 3D 视图按 `N` → 侧栏 **VertexPhysics** 标签页。
 
@@ -178,7 +181,11 @@ maxInstances=24
 wind=1.0
 mapphysics=1
 mapconvert=2
+mapcollision=0
 dumpGeometry=0
+clothgravity=1.0
+clothfollow=0.0
+clothdamping=0.95
 ```
 
 | 键 | 默认 | 范围 | 说明 |
@@ -187,10 +194,43 @@ dumpGeometry=0
 | `worldRadius` | 2.5 | 0.5~20 | 跨模型碰撞收集半径（米）。披风很长时调到 6~10 |
 | `interactRadius` | 8 | 1~50 | 地图物件物理扫描半径（米） |
 | `maxInstances` | 8 | 0~64 | 地图物件物理实例上限，0=关闭 |
-| `wind` | 1.0 | 0~5 | 全局风力倍率（乘到天气强度上） |
+| `wind` | 1.0 | 0~20 | 全局风力倍率（乘到天气强度上） |
 | `mapphysics` | 0 | 0/1 | 地图物件物理开关 |
 | `mapconvert` | 0 | 0/1/2 | 0=关 / 1=换入换回 / 2=常驻换入（推荐） |
 | `dumpGeometry` | 0 | 0/1 | 1=把白名单模型几何体导出成 dump |
+| `clothgravity` | 1.0 | 0~3 | 布料重力倍率。越大越"沉"，下垂/摆动越有力 |
+| `clothfollow` | 0.0 | 0~1 | 有挂点的布料向静止姿势回拉的强度。0=完全自由垂坠 |
+| `clothdamping` | 0.95 | 0.50~0.999 | 布料每帧阻尼（60fps 基准）。0.95 约 1.5 秒静止，0.98 会持续摆 |
+| `mapcollision` | 0 | 0/1 | 地图实例布料的世界碰撞。旗子挂自己墙上时建议 0，否则会被墙面顶住并抖动 |
+| `clothpinstiffness` | 0.15 | 0.02~1.0 | 竖向挂点（旗帜升旗边）的挂点刚度。1=缝死在杆上，0.15=自然垂落 |
+| `clothwind` | 1.8 | 0~10 | 布料受风倍率。1=与头发相同，旗帜建议 1.5~3 |
+| `clothinertia` | 0.6 | 0~0.95 | **v1.4** 布料惯性继承。角色跑动时布料"跟着身体走"的比例。0=旧行为（靠挂点回拉去追，冲刺时布料会滞后十几厘米），0.6=推荐，1.0=完全跟死 |
+| `bodycolliderscale` | 1.0 | 0.5~2.0 | **v1.4** 人体胶囊半径倍率（人物自身碰撞）。1.1 = 腿整体加粗 10% |
+| `bodycollidermargin` | 0.01 | 0~0.08 | **v1.4** 人体胶囊半径额外加成（米）。胶囊比真实网格瘦，加 1~2cm 让布料停在网格外面 |
+| `clothmargin` | 0.015 | 0~0.08 | **v1.5** 布料与身体胶囊之间的安全距离（米，只对 Cloth 生效）。0.015=裙子离腿 1.5cm；太小会露出腿网格，太大会显得悬浮 |
+
+### 布料手感（v1.1 / v1.2）
+
+布料现在按"**挂点 + 约束 + 重力**"求解，不再被静止姿势的弹簧拽住：
+
+- **有挂点的布料片**（披风、旗帜、裙摆，边界与刚性网格共享三角形）默认完全不回拉到
+  静止姿势。水平展开的旗面会绕挂点自然翻落，而不是被一股无形的力提在半空。
+- **没有挂点的布料片**（整片都是布料、没有刚性边框）仍保留 60% 的跟随力，
+  否则人物走动时会整片被留在原地。
+- 布料的**自由位移上限**改为"绕锚点转到另一侧"的几何上限（`2 × 最近挂点距离`），
+  不再是写死的 1.5m / 15cm，大旗面也能完整垂下来。
+- 布料使用独立的**重力 / 阻尼 / 迭代次数**；`clothfollow` 想保留一点"形状记忆"时
+  从 0.05~0.2 开始试。
+- **挂点会按方向自动软化**（v1.2）：如果一片布料的挂点排成一条**竖线**（旗帜的升旗边），
+  说明它是"挂在杆上、向外展开"的旗面。这种挂点默认用 `clothpinstiffness=0.15` 的
+  软连接，布面才能在自重下从杆上滑开、自然垂落；横幅上沿、披风肩线这类**横排挂点**
+  仍然保持硬连接，避免衣服从身上滑脱。
+  - 如果你把整条竖边硬缝死在杆上，旗面会被完全锁住——看起来就是"被无形的力提住"。
+  - 真实旗帜的升旗边只有几个挂环，布料本身是软的；软挂点就是在模拟这一点。
+
+> 想快速判断修复是否生效：看 `vertexphysics_physics.log` 里的
+> `[VER_82][Span] pinRootedPieces=...` 和 `[VER_82][Step] ... cloth(n,max=x m)`。
+> 水平旗面落下时 `max` 会明显超过 1.5m（旧版被卡在 1.5m）。
 
 ### 白名单
 
@@ -373,6 +413,221 @@ mod 会按**顶点数**把每个 dat 匹配给车辆的每个 atomic，顶点数
 - 地图物件走 **模型空间**：没有骨骼，只有风 + 湍流 + 重力 + 形状记忆，
   且 `invMass=0` 的 Body 粒子在该分支会被跳过。
 
+### 布料与人物自身身体的碰撞（v1.3 / v1.4）
+
+人物/车辆布料会和**同一模型自己的骨骼胶囊**碰撞，解决裙子、披风直接穿过腿/身体的问题。
+
+- 胶囊布局按 GTA 人物骨骼 ID 生成：骨盆球、髋部、左右大腿、左右小腿、**髋/膝关节球**、
+  左右前臂、左右脚、臀部球体、躯干、胸部球体、脖子/头、上臂（v1.4 起共 22 根）。
+  以前是按"骨骼数组相邻索引"配对，顺序不对应真实关节，腿部经常没有碰撞体。
+- **扫掠碰撞（CCD）**：用粒子本帧的运动线段去扫胶囊，**每个采样时刻都用插值后的
+  胶囊端点**（大腿是绕髋旋转的，不是平移），子步数同时按胶囊位移和粒子位移决定。
+  v1.3 的旧实现只在"粒子相对胶囊运动很快"时才扫，而布料跟着身体走时这一项≈0，
+  等于 CCD 从来没生效（日志里 `[CCD] hits` 长期为 0）——v1.4 已修。
+- **骨骼姿态同步**：GTA 的骨架世界矩阵是在 `CPed::Render` 里刷新的，插件在
+  `drawingEvent.before` 拿到的是上一帧骨架。v1.4 在步进前调用游戏自己的
+  `CEntity::UpdateRpHAnim`，让胶囊和布料锚点都用本帧骨架
+  （日志 `[VER_82][AnimPose] staleMax=..mm`，0 表示本来就没滞后）。
+- **布料惯性继承**（`clothinertia`）：奔跑时布料跟着身体走，不再靠"挂点回拉"慢慢追，
+  消除"布料永久滞后十几厘米 → 腿从裙子里穿出来"。
+- **最终碰撞修正**：所有约束、拉伸上限、距离限幅之后再补一遍
+  "静态 ×2 → 扫掠 → 拉伸上限 → 收尾静态"，防止"碰撞推出 → 边长/回拉又拉回身体"。
+- **布料专用安全距离**（`clothmargin`，v1.5）：只给 Cloth 粒子额外加 1.5cm，
+  让裙子停在腿部网格外面；头发/身体胶囊半径不变，不会把头发撑开。
+- **接触速度一致性**（v1.5）：静态碰撞现在也会记录法线，最终统一只去掉**法向**速度、
+  保留切向。以前只处理 CCD 法线，风把裙子压在腿上时静态推出只改了 `pos` 没同步 `prev`，
+  下一帧隐式速度会带着"被推出去"的分量 → 弹开、再被风压回，表现为抖动/贴模。
+- 命中后保留**切向速度**，布料会沿身体滑动，而不是粘在胶囊表面。
+- 运行时日志：`[VER_82][Colliders] capsules=22 scale=.. margin=.. radii=...`
+  和 `[VER_82][CCD] capsules=22 static=.. swept=.. contactParticles=.. margin=..mm maxPen=..mm finalPen=..mm worst=..`。
+- 这是**胶囊近似**，不是逐三角形的人物网格自碰撞：能挡住大腿/小腿/髋/躯干的穿透，
+  但贴得很紧的衣服可能被略微撑开；极端姿势（大幅摆腿/蹲下）仍可能有少量穿插。
+- 车辆等非人物骨骼模型会退回原来的"相邻骨骼胶囊"方案。
+
+---
+
+## 10.5 身体物理（Body，R = 0xC0）：不同区域为什么往不同方向抖
+
+### 10.5.1 它不走 Verlet
+
+Body 顶点在初始化时被强制设成 `invMass = 0`（`GeometryPhysics.cpp:1130`），
+因此它**不参与**离散步进、约束求解、胶囊碰撞、世界碰撞中的任何一项。
+
+它唯一的运动方式是：
+
+```cpp
+p.posWorld = p.anchorWorld + p.jiggleOffset * p.boundaryFade;   // :4500
+```
+
+即：**骨骼蒙皮位置 + 一个由“弹簧”算出来的偏移量**。
+所以 Body 的“抖动”本质是 **每个分组一个虚拟弹簧的位移**，而不是一堆粒子在互相推。
+
+### 10.5.2 顶点色含义
+
+| 通道 | 含义 | 对 Body 的影响 |
+|---|---|---|
+| **R = 0xC0** | 标记为身体组织 | — |
+| **G** | 软度（`stiffness`） | 决定单组的刚度/阻尼，以及幅度系数 |
+| **B** | 锚定强度 `anchorFactor = 1 - B/255` | 幅度：`1 - anchorFactor` 越大抖得越明显（B 越小越明显） |
+
+> Body 的 `B=0` **不会**变成 hardAnchor（`:619` 专门把 Body 的 hardAnchor 关掉了），
+> 所以 B=0 表示“最大幅度”，不是“不动”。要完全不动请刷 R=0（Rigid）。
+
+### 10.5.3 分组：决定“哪些区域各自抖”
+
+`bodyGroup` 在初始化时分配（`:2084-2228`），有三种模式（ini `bodygroup`）：
+
+| ini | 模式值 | 分组方式 | 典型效果 |
+|---|---|---|---|
+| `piece`（默认） | 0 | **一个连通片 = 一组**（`components`） | 左胸、右胸、腹是独立片 → 天然分成 3 组 |
+| `bone` | 1 | 不分配，回退到 `dominantBone` | 同挂脊椎骨的区域会落进同一组（同步抖） |
+| `cluster` | 2 | 片内 **k-means**（按锚点位置聚类，`bodygroupsplit` 组） | 一整片（例如整块胸）也能被切成左右/上下多组 |
+
+每组的运行状态存放在 `rig.bodyGroups[g]`（`GeometryPhysics::BodyGroupState`）：
+
+```cpp
+RwV3d prev;        // 上一帧的组锚点平均位置
+RwV3d anchorVel;   // 组锚点的速度
+RwV3d accSmooth;   // 低通后的驱动加速度
+RwV3d offset;      // 弹簧位移（这就是“抖”的量）
+RwV3d vel;         // 弹簧速度
+bool  init;
+```
+
+每个 Body 顶点每帧按自己的 `bodyGroup` 去查这个表（`:4133`、`:4399`）。
+
+### 10.5.4 驱动：来自骨骼的运动，不是随机噪声
+
+每组每帧计算“组锚点平均位置” `anchorAvg`（该组所有 Body 顶点 `anchorWorld` 的平均），然后：
+
+```cpp
+anchorVel = (anchorAvg - prev) / dt;
+anchorAcc = (anchorVel - state.anchorVel) / dt;   // 二阶差分
+state.prev = anchorAvg; state.anchorVel = anchorVel;
+```
+
+接着做三步保护（`:4176-4209`）：
+
+| 处理 | 参数 | 作用 |
+|---|---|---|
+| **跳变重置** | `jumpLen > 0.5m` | 传送/换模型/重生 → 直接清零 offset/vel，不把瞬移当加速度 |
+| **一阶低通** | 系数 `0.35`（≈3~4 帧记忆） | 滤掉骨骼动画里的高频噪声（实测可达数百 m/s²） |
+| **限幅** | `25 m/s²` | 防止尖峰把弹簧打飞 |
+
+### 10.5.5 关键：每组绕“确定性随机轴”旋转驱动方向
+
+这是“左胸/右胸/腹能往不同方向抖”的**核心机制**（`:4228-4269`）。
+
+问题在于：三块区域的锚点都挂在**同一根脊椎骨**上，加速度几乎完全相同，
+所以即使分了组，三组也会朝**同一个方向**抖。
+
+解决办法：给每组一个**由组号决定的随机轴**，把驱动向量绕它旋转一点角度：
+
+```cpp
+unsigned h = (unsigned)g * 2654435761u + 0x9E3779B9u;   // 组号 → 确定性哈希
+// 三次 xorshift 得到轴向量 (x,y,z)，归一化
+float ang = bodyrandom * 0.7f;                          // 最多 ≈40°
+drive = Rodrigues(drive, axis, ang);                    // 绕轴旋转
+```
+
+要点：
+
+- **确定性**：同一组号永远得到同一根轴，不会每帧变化（否则就是噪声）；
+- **不同组 → 不同方向**：左胸(组0)、右胸(组1)、腹(组2) 各自偏转不同角度；
+- `bodyrandom=0` 时完全关闭旋转 → 所有组同步（用于对照测试）。
+
+### 10.5.6 弹簧积分
+
+```cpp
+k = bodyk > 0 ? bodyk : (30 + 120 * soft);     // soft = 组内平均 stiffness
+c = bodyc > 0 ? bodyc : (1.5 + 5 * soft);      // ζ = c / (2√k)
+
+for (si = 0; si < springSteps; ++si) {         // 固定子步 1/120s，1~4 步
+    acc    = -k * offset - c * vel - driveScale * drive;
+    vel   += acc * hs;
+    offset += vel * hs;
+}
+```
+
+- `driveScale = bodydrive`（默认 1.30）；
+- 固定 `1/120s` 子步 ⇒ **刚度/阻尼的响应不随帧率变化**（`:4272-4297`）。
+
+### 10.5.7 幅度与环境钳制
+
+```cpp
+softnessN = 1 - soft;
+amp = 0.070 * clamp(groupAmp) * (0.15 + 0.85 * softnessN) * bodyamp;
+```
+
+其中 `groupAmp = max(1 - anchorFactor)`（组内 B 通道最强的那一个）。
+位移超出 `amp` 时**不是硬钳制**，而是：
+
+1. 方向保留、长度压回球面（`:4323`）；
+2. **同时去掉向外的那部分速度分量**（`:4317-4325` 的注释解释了为什么：旧版“钳制 + 速度砍半”会产生锯齿抖动）。
+
+### 10.5.8 从“组位移”到“顶点位移”
+
+```cpp
+p.jiggleOffset = state.offset * p.jiggleWeight;      // :4407
+
+// 同组邻域平滑 bodysmooth 次（跨组不平滑）             :4423-4466
+// 相邻顶点位移差硬限制 4mm，3 遍                         :4468-4493
+// 最后乘边界渐隐                                         :4500
+p.posWorld = p.anchorWorld + p.jiggleOffset * p.boundaryFade;
+```
+
+- **平滑只在同组内**（`bodygroup != 1` 时按 `bodyGroup` 过滤）——否则左胸/右胸的差异会被直接抹平；
+- **4mm 硬限制**是“网格不会被撕开”的硬保证，不管前面怎么分组；
+- `boundaryFade` 让靠近未刷色区域的顶点位移渐隐到 0，避免硬边。
+
+### 10.5.9 参数速查
+
+| ini | 默认 | 作用 | 调大 | 调小 |
+|---|---|---|---|---|
+| `bodygroup` | `piece` | 分组模式 `piece`/`bone`/`cluster` | — | — |
+| `bodygroupsplit` | 3 | `cluster` 模式每组数 | 更碎 | 更整 |
+| `bodyrandom` | 0.25 | 每组驱动方向偏转（0~1，≈40°×值） | 各区域方向差更大 | 0 = 完全同步 |
+| `bodysmooth` | 3 | 同组邻域平滑次数（0~12） | 更柔和、差异变小 | 更“各自为政” |
+| `bodyk` | 0 | 弹簧刚度（>0 覆盖公式） | 更快更紧 | 更软更慢 |
+| `bodyc` | 0 | 阻尼（>0 覆盖公式） | 回弹更少 | 回弹更多 |
+| `bodydrive` | 1.30 | 加速度驱动倍率 | 抖得更明显 | 更收敛 |
+| `bodyamp` | 1.0 | 幅度总倍率 | 位移更大 | 更小 |
+
+### 10.5.10 想让“左胸 / 右胸 / 腹”三个区域明显分开抖
+
+```ini
+bodygroup=piece        ; 三个连通片自然分成三组
+bodyrandom=0.5         ; 各组方向明显偏离（0.7 已接近 40° 上限）
+bodysmooth=3           ; 保持组内平滑，别抹平组间差异
+bodyk=380              ; 更快
+bodyc=3.0              ; 少回弹
+bodyamp=1.3            ; 幅度放大
+```
+
+如果整块胸是**一个连通片**、`piece` 分不开，就用：
+
+```ini
+bodygroup=cluster
+bodygroupsplit=3       ; 按锚点位置 k-means 切成 3 组（左右 + 中）
+bodyrandom=0.5
+```
+
+### 10.5.11 代码索引
+
+| 位置 | 内容 |
+|---|---|
+| `GeometryPhysics.cpp:80-97` | 全局参数（bodyk/bodyc/bodydrive/bodyamp/bodygroup*） |
+| `GeometryPhysics.cpp:1130` | Body 顶点 `invMass = 0` |
+| `GeometryPhysics.cpp:2084-2228` | `bodyGroup` 分配（piece / bone / cluster k-means） |
+| `GeometryPhysics.cpp:4129-4142` | 组锚点平均 / 软度 / 幅度统计 |
+| `GeometryPhysics.cpp:4153-4209` | 组状态、速度/加速度、跳变重置、低通、限幅 |
+| `GeometryPhysics.cpp:4228-4269` | 每组确定性随机轴旋转（方向分离的核心） |
+| `GeometryPhysics.cpp:4279-4297` | 固定 1/120s 子步弹簧积分 |
+| `GeometryPhysics.cpp:4301-4325` | 幅度计算与球面钳制 |
+| `GeometryPhysics.cpp:4399-4466` | 组位移 → 顶点位移 + 同组平滑 |
+| `GeometryPhysics.cpp:4468-4493` | 相邻位移差 4mm 硬限制 |
+| `GeometryPhysics.cpp:4500` | 最终 `posWorld = anchorWorld + offset * boundaryFade` |
+
 ---
 
 ## 11. 日志与排错
@@ -381,8 +636,8 @@ mod 会按**顶点数**把每个 dat 匹配给车辆的每个 atomic，顶点数
 
 | 文件 | 内容 |
 |---|---|
-| `wfyro_hair.log` | 配置、模型扫描、dat 加载、rig 创建、渲染钩子 |
-| `geophys_debug.log` | 颜色分类 `[ColorHist]`、步进 `[Step]`、身体分组 `[BodyGroups]` |
+| `vertexphysics.log` | 配置、模型扫描、dat 加载、rig 创建、渲染钩子 |
+| `vertexphysics_physics.log` | 颜色分类 `[ColorHist]`、步进 `[Step]`、身体分组 `[BodyGroups]` |
 
 ### 常用日志行
 
@@ -405,10 +660,16 @@ mod 会按**顶点数**把每个 dat 匹配给车辆的每个 atomic，顶点数
 | 物理只在几个点上 | 只刷了几个顶点 | 重刷，确认 `(128,200,255)` 数量足够 |
 | 模型整体变色 | 用顶点色方案 | 改用 `.dat`（`datonly=1`） |
 | 布料/头发整体跟着转 | 锚定 B 太大 | 提高 B 到 255，让锚定关闭 |
+| 旗帜/布料被"无形的力"提住、不下垂 | 旧版没有 B=0 顶点时，布料自由位移被限制在 15cm | v1.1 已修：改用挂点距离计算自由半径；确认 `[Span] pinRootedPieces>0` |
+| 布料落下得太多/太软 | 自由垂坠没有形状记忆 | 把 `clothfollow` 调到 0.05~0.2 |
+| 布料摆得太飘 | 阻尼太低 | 把 `clothdamping` 调低到 0.96~0.975 |
 | 披风/头发被拉长 | 约束链太长 | 优先用 B=255 + 挂点；必要时降低软度 |
 | 车辆一出现就卡 | 每个部件都建了 rig | 只给需要的部件导 dat（新版本会自动跳过全白 dat） |
 | 地图物件不动 | `mapphysics=0` / 不在扫描半径 | 打开 `mapphysics=1`，调大 `interactRadius` |
 | 头发/布料穿过身体 | 碰撞半径太小 | 调大 `worldRadius` |
+| 人物跑动时裙摆穿过腿 | ① CCD 没生效（旧版 `[CCD] hits=0`）② 胶囊比网格瘦 ③ 布料滞后 | v1.4 已修 CCD/骨架同步/惯性；仍穿就调 `bodycollidermargin`（0.015~0.02）或 `bodycolliderscale`（1.05~1.15） |
+| 裙子静止贴腿时"像穿进去" | 布料贴着胶囊表面，而腿部网格比胶囊大；或静态碰撞只改 `pos` 没同步 `prev`，接触时抖动 | v1.5 已加 `clothmargin`（默认 0.015）和静态法线速度修正；太贴就调到 0.02~0.03，太悬浮就降到 0.008~0.01 |
+| 布料跑动时像"粘"在身上 | `clothinertia` 太大 | 降到 0.4~0.5；0 = 旧行为 |
 
 ---
 
@@ -456,460 +717,7 @@ GTA SA 的 RenderWare 3.7 是 2004 年为 PS2 内存预算设计的**预编译**
 | `[Pinned]` | 挂点统计 |
 | `[BodyGroups]` | 身体软组织分组 |
 
----
----
 
-# VertexPhysics for GTA SA — Documentation & Tutorial (English)
 
-> Add **Hair / Cloth / Body Soft-Tissue** vertex physics to peds, vehicles, and map objects.
-> Physics data can be read from model vertex colors or external `.dat` files (recommended, as it prevents tinting the model).
 
-Version: ASI v1.0 (matches current source code) / Blender Add-on v1.6.0
-Compatibility: GTA San Andreas 1.0 US (MSVC x86 build, outputs `.asi`)
 
----
-
-## Table of Contents
-
-1. [What It Can / Cannot Do](#1-what-it-can--cannot-do)
-2. [Installation](#2-installation)
-3. [Quick Start (5 Minutes)](#3-quick-start-5-minutes)
-4. [Vertex Color Encoding](#4-vertex-color-encoding)
-5. [INI Configuration Details](#5-ini-configuration-details)
-6. [Three Data Sources](#6-three-data-sources)
-7. [Exact Dump Workflow (100% Vertex Order Alignment)](#7-exact-dump-workflow-100-vertex-order-alignment)
-8. [Blender Add-on Tutorial](#8-blender-add-on-tutorial)
-9. [Multi-Part Models (Vehicles)](#9-multi-part-models-vehicles)
-10. [Supported Model Types × Physics Types](#10-supported-model-types--physics-types)
-11. [Logs & Troubleshooting](#11-logs--troubleshooting)
-12. [Known Limitations (Engine-Level)](#12-known-limitations-engine-level)
-13. [Performance Tips](#13-performance-tips)
-
----
-
-## 1. What It Can / Cannot Do
-
-### Supported Physics Types
-
-| Type | R Value | Behavior |
-|---|---|---|
-| **Hair** | `64` | Anchored to the scalp/hat; exhibits lag and sway when walking or turning, and reacts to wind |
-| **Cloth** | `128` | Capes, skirts, flags: gravity droop + swaying + inertia lag |
-| **Body** | `192` | Chest/glutes, etc.: spring jiggle driven by bone movement with boundary falloff |
-| **SoftBody** | `254` | Similar to Cloth but stiffer; suitable for soft accessories |
-
-### Supported Model Types
-
-- ✅ **Peds (Characters)**: Supports all physics types
-- ✅ **Vehicles**: Supports all physics types (each component gets an independent rig)
-- ⚠️ **Static Map Objects**: Wind sway only (Hair/Cloth/SoftBody are all processed as wind sway).
-  `192` (Body) **does not work** on map objects (no skeleton bones to drive motion).
-
-### Not Supported
-
-- ❌ Adding new bones to models (GTA SA skeletons are fixed at 32 bones; adding bones causes crashes)
-- ❌ Detaching vertices from skinning (ped atomics require `RpSkin`; removing it crashes the game)
-- ❌ Strand-by-strand hair simulation like UE/Blender (requires hair card/strand structures or bone chains)
-- ❌ Importing FBX/OBJ at runtime (the engine only supports DFF)
-
-> See [12. Known Limitations (Engine-Level)](#12-known-limitations-engine-level) for technical details.
-
----
-
-## 2. Installation
-
-### 2.1 ASI Plugin
-
-1. Ensure **CLEO** (which loads `.asi` files) or any standard ASI Loader is installed.
-2. Place the `Vertex Physics mod` folder into:
-
-   ```
-   <Game Directory>\modloader\
-   ```
-   For example: `A:\Vanilla GTASA\modloader\Vertex Physics mod`
-3. Launch the game → configuration and log files will be automatically generated in the game directory on first run.
-
-### 2.2 Directory Structure
-
-```
-<Game Directory>\
-├─ VertexPhysics.asi            (or inside modloader)
-├─ vertexphysics.ini             ← Configuration file
-├─ vertexphysics\                ← Physics data directory (auto-created)
-│   ├─ wfyro.dat                 ← Single-part model
-│   ├─ admiral\                  ← Multi-part model (vehicle)
-│   │   ├─ chassis.dat
-│   │   └─ wheel.dat
-│   └─ dump\                     ← Exported geometry when dumpGeometry=1
-│       └─ wfyro_1094.txt
-```
-
-### 2.3 Blender Add-on
-
-1. In Blender, go to **Edit → Preferences → Add-ons → Install…**
-2. Select `blender vertexphysics addon.py`
-3. Check the box to enable **VertexPhysics Exporter**
-4. Press `N` in the 3D Viewport → open the **VertexPhysics** tab in the sidebar.
-
----
-
-## 3. Quick Start (5 Minutes)
-
-**Goal**: Add physics to a character's cape.
-
-1. In Blender, paint the cape vertices with color: `128, 200, 255`
-   (= Cloth / Softness 200 / Anchoring completely off)
-2. Export the DFF and place it into your game (`modloader`).
-3. Open `vertexphysics.ini`:
-
-   ```ini
-   datonly=0          ; Test with vertex colors first
-   wfyro              ; Append model name (must match the model name in gta3.img)
-   ```
-
-4. Launch the game → check `vertexphysics.log`:
-
-   ```
-   [Config] resolved wfyro -> modelId=92
-   [Entity] rig created modelId=92 ... cloth=221 ...
-   ```
-
-5. Check in-game to see if the cape sways.
-
-> Want to avoid tinting your model with vertex colors? Use the `.dat` workflow in Section 6.
-
----
-
-## 4. Vertex Color Encoding
-
-Meaning of the three RGB channels:
-
-| Channel | Meaning | Value Range |
-|---|---|---|
-| **R** | Physics Type | `0 / 64 / 128 / 192 / 254` |
-| **G** | Softness (higher = softer) | `0~255` |
-| **B** | Anchor Strength (higher = freer movement) | `0~255` |
-
-### Softness (G) Mapping
-
-| G | Stiffness | Return Strength | Feel |
-|---|---|---|---|
-| 0 | 1.00 | 0.50 | Very stiff |
-| 64 | 0.77 | 0.38 | Moderately stiff |
-| 128 | 0.55 | 0.26 | Medium |
-| 192 | 0.32 | 0.14 | Soft |
-| 255 | 0.10 | 0.02 | Very soft |
-
-### Anchoring (B) Behavior
-
-| B | Effect |
-|---|---|
-| `0` | **Hard Anchor**: Completely locked to the bone (ideal for hair roots, waistbands) |
-| `30~80` | Strong Anchor: Follows the body closely with minimal sway |
-| `150` | Medium |
-| `255` | **Unanchored**: Driven solely by pinned vertices, constraints, gravity, and wind |
-
-### Recommended Color Presets
-
-| Region | Color (R, G, B) | Description |
-|---|---|---|
-| Upper cape / skirt waist | `128,120,60` | Anchored near the waist |
-| Mid cape / skirt | `128,180,150` | Transition zone |
-| Lower cape / hem | `128,200,255` | Free flowing |
-| Hair roots | `64,120,40` | Anchored to the scalp |
-| Mid hair | `64,160,150` | Transition zone |
-| Hair tips | `64,200,255` | Free swinging |
-| Chest soft tissue | `192,40,40` | Subtle jiggle (lower G = smaller amplitude) |
-| Glute soft tissue | `192,90,60` | Slightly more pronounced jiggle |
-
-> **Pure white `255,255,255` and pure grayscale (where R = G = B) are excluded from physics**,
-> meaning unpainted or white-painted vertices will strictly follow standard bone skinning.
-
----
-
-## 5. INI Configuration Details
-
-File: `<Game Directory>\vertexphysics.ini` (requires game restart after editing)
-
-```ini
-datonly=0
-worldRadius=2.5
-interactRadius=60
-maxInstances=24
-wind=1.0
-mapphysics=1
-mapconvert=2
-dumpGeometry=0
-```
-
-| Key | Default | Range | Description |
-|---|---|---|---|
-| `datonly` | 1 | 0/1 | `1` = read `.dat` files only; `0` = read model vertex colors |
-| `worldRadius` | 2.5 | 0.5~20 | Cross-model collision collection radius (meters). Increase to `6~10` for long capes |
-| `interactRadius` | 8 | 1~50 | Map object physics scan radius (meters) |
-| `maxInstances` | 8 | 0~64 | Max active map object physics instances (`0` = disabled) |
-| `wind` | 1.0 | 0~5 | Global wind multiplier (multiplied onto weather wind strength) |
-| `mapphysics` | 0 | 0/1 | Toggle physics for map objects |
-| `mapconvert` | 0 | 0/1/2 | `0` = off / `1` = swap in & out / `2` = persistent swap-in (recommended) |
-| `dumpGeometry` | 0 | 0/1 | `1` = dump geometry of whitelisted models to text files |
-
-### Whitelist
-
-```
-# One model name per line (lowercase, matching gta3.img)
-wfyro
-admiral
-test
-```
-
-> Models not listed in the whitelist are **completely ignored** (logged as `[MarkerModel]`).
-
-### Weather Wind Settings
-
-```
-wind<WeatherID>=Angle,Strength,TurbulenceFreq
-winddefault=0,0.6,0.15
-```
-
-| Field | Meaning |
-|---|---|
-| Angle | `0~360°`, `0` = +X (East), `90` = +Y (North) |
-| Strength | `0` calm / `1` breeze / `3` strong wind / `6` gale |
-| Turbulence | `0` steady / `0.3` slow / `1.5` rapid (Hz) |
-
-Common Weather IDs:
-
-| ID | Weather | ID | Weather |
-|---|---|---|---|
-| 0~3 | Los Santos Sunny | 12 | Las Venturas Cloudy |
-| 4 | LS Cloudy | 15 | Countryside Cloudy |
-| 8 | San Fierro Rain | 16 | Countryside Rain |
-| 9 | SF Fog | 19 | Desert Sandstorm |
-| | | 20 | Underwater |
-
----
-
-## 6. Three Data Sources
-
-### Method A: Direct Vertex Colors (Fastest)
-
-- **Pros**: No extra files needed; paint, export DFF, and test immediately.
-- **Cons**: **Vertex colors also act as pre-lighting colors in GTA SA**, so painting physics colors will tint the model in-game.
-- **Usage**: Set `datonly=0` and add the model name to the whitelist.
-
-### Method B: Single `.dat` File (Recommended — No Model Tinting)
-
-1. Paint vertex colors in Blender.
-2. Click **Export .dat** in the Blender add-on.
-3. Place `<model_name>.dat` inside `vertexphysics\`.
-4. Set `datonly=1`.
-
-The mod temporarily writes the `.dat` colors into a cloned mesh for physics simulation and **immediately restores original vertex colors afterward**, leaving your model's appearance unaffected.
-
-### Method C: Multi-Part `.dat` Folder (Vehicles)
-
-```
-vertexphysics\admiral\
-    chassis.dat
-    wheel.dat
-    ...
-```
-
-The mod matches each `.dat` file to the vehicle's atomics by **vertex count**, using `# bbox:` bounding box checks as a tie-breaker when vertex counts match.
-
----
-
-## 7. Exact Dump Workflow (100% Vertex Order Alignment)
-
-**When to use**: When Blender's vertex order or count does not match the game's runtime mesh (common with vehicles and multi-material meshes).
-
-### Steps
-
-1. **Enable dump in `vertexphysics.ini`**:
-
-   ```ini
-   datonly=1
-   dumpGeometry=1
-   wfyro
-   ```
-
-2. **Launch the game and spawn/encounter the model once**, then exit the game.
-
-   This generates: `vertexphysics\dump\wfyro_1094.txt`
-
-3. **Back in Blender**: Paint your vertex colors → click **Generate dat from game dump (Exact)** → select the generated `.txt` file.
-
-   The add-on uses a KDTree to spatially map your vertex colors onto the exact vertex order of the dump, producing a `.dat` with a **100% matching vertex count and order**.
-
-4. **Place the `.dat` file** at `vertexphysics\wfyro.dat` (or `wfyro_1094.dat` — both are recognized) and restart the game.
-
-### Verification
-
-```
-[Dat] loaded A:\Vanilla GTASA\vertexphysics\wfyro.dat vertices=1094
-[Entity] rig created modelId=92 ... hair=... cloth=...
-```
-
----
-
-## 8. Blender Add-on Tutorial
-
-Panel location: 3D Viewport `N` → **VertexPhysics** tab
-Top-right button: `English` / `中文` toggles UI language (tooltips are always bilingual).
-
-### 8.1 Properties
-
-| Property | Description |
-|---|---|
-| **Model Name** | Matches IDE/CModelInfo name (e.g., `test`); also used as the `.dat` filename |
-| **Output Directory** | Destination folder for `.dat` files; defaults to `//vertexphysics` (relative to `.blend` file) |
-| **Coordinate Axes** | Axis conversion for positions (matching relies primarily on vertex index; positions are used for validation) |
-| **Apply Object Transform** | Bakes object transforms into vertex coordinates upon export |
-| **Clear Vertex Colors After Export** | Resets vertex colors to white after exporting (off by default — **keep off**, or subsequent exports will be blank) |
-| **Export to Model Subdirectory** | For multi-part models: outputs to `<Output Directory>/<Model Name>/` |
-| **Target Object Prefix** | Objects starting with this prefix are treated as "targets" (re-imported DFF meshes) |
-| **Strip .001 Suffix** | Removes trailing `.001` from object names when naming `.dat` files |
-| **Name as part_01, part_02…** | Sequentially names exported files as `part_01.dat`, `part_02.dat`, etc. |
-| **Dump Folder** | Directory containing geometry dumps exported by the game |
-
-### 8.2 Operators / Buttons
-
-| Button | Function |
-|---|---|
-| **Export .dat** | Exports the active object to a single `.dat` file |
-| **Export All Selected Objects** | Exports each selected mesh as its own `.dat` file |
-| **Clear Vertex Colors** | Resets vertex colors to pure white |
-| **Paint Selected Vertices** | Assigns the chosen physics type, softness, and anchor color to selected vertices in Edit Mode |
-| **Export by DFF Vertex Order (Recommended)** | Select two objects: Source (painted) + Re-imported DFF; generates a `.dat` matching the DFF's vertex order |
-| **Batch Export by DFF Order** | Multi-part batch version of the DFF order exporter |
-| **Add Prefix to Selected** | Prepends the "Target Object Prefix" to selected meshes |
-| **Generate dat from Game Dump (Exact)** | Uses a game dump file to generate a `.dat` with identical vertex ordering |
-| **Batch Generate from Dump Folder** | Processes an entire folder of dump files at once |
-
-### 8.3 Quick Painting
-
-**Paint Selected Vertices**: Enter Edit Mode → select vertices → choose Type (`Hair` / `Cloth` / `Body` / `SoftBody`) + Softness + Anchoring → click the button.
-
----
-
-## 9. Multi-Part Models (Vehicles)
-
-### Exporting
-
-1. Select all vehicle component objects.
-2. Enable **Export to Model Subdirectory**.
-3. Click **Export All Selected Objects** (or **Batch Export by DFF Order**).
-4. You will get `<Output Directory>\admiral\*.dat`.
-5. Copy the entire folder to `vertexphysics\admiral\`.
-
-### Important: Only Create `.dat` Files for Parts That Need Physics
-
-**Do not include `.dat` files for parts with no physics colors.** Otherwise, the mod will still create a physics rig for them (cloning geometry and running per-frame collision checks), which can noticeably drop FPS on complex vehicles.
-
-> Newer versions automatically skip `.dat` files that are all-white, but exporting only the necessary parts remains best practice.
-
-### Verification
-
-```
-[Entity] skip modelId=445 verts=105 (dat has no physics colors)
-[Entity] rig created modelId=445 verts=1802 cloth=63 ...
-```
-
-Seeing `rig created` only for the intended part confirms your setup is optimal.
-
----
-
-## 10. Supported Model Types × Physics Types
-
-| Model Type | Hair (64) | Cloth (128) | Body (192) | SoftBody (254) |
-|---|---|---|---|---|
-| Ped (Character) | ✅ | ✅ | ✅ | ✅ |
-| Vehicle | ✅ | ✅ | ✅ | ✅ |
-| Map Object | ⚠️ Wind sway only | ⚠️ Wind sway only | ❌ Inactive | ⚠️ Wind sway only |
-
-Notes:
-
-- **Peds & Vehicles** simulate in **World Space**: supports bone anchoring, pinned vertices, wind forces, and Body spring dynamics.
-- **Map Objects** simulate in **Model Space**: no bones are present, so simulation uses wind + turbulence + gravity + shape memory; Body particles (`invMass=0`) are skipped in this branch.
-
----
-
-## 11. Logs & Troubleshooting
-
-### Log Files
-
-| File | Contents |
-|---|---|
-| `wfyro_hair.log` | Configuration loading, model scanning, `.dat` loading, rig creation, render hooks |
-| `geophys_debug.log` | Color classification (`[ColorHist]`), simulation steps (`[Step]`), body soft-tissue grouping (`[BodyGroups]`) |
-
-### Key Log Messages
-
-| Log Entry | Meaning |
-|---|---|
-| `[Config] resolved wfyro -> modelId=92` | Whitelist model name resolved successfully |
-| `[Dat] loaded ... vertices=1094` | `.dat` file loaded |
-| `[Dat] not found: ...` | Incorrect `.dat` path or filename |
-| `[ColorHist] unique=3 | (128,200,255)=990` | Vertex color classification breakdown (most important diagnostic line) |
-| `[Entity] rig created ... hair=/cloth=/body=` | Physics rig initialized successfully |
-| `[Entity] init FAILED ...` | Initialization failed (usually due to zero physics-colored vertices) |
-| `[Entity] skip modelId=... (dat has no physics colors)` | Part skipped because it has no physics colors |
-| `[VER_82][Step] ... hair(n,max=x m)` | Max particle displacement per category (useful for judging sway amplitude) |
-
-### Common Issues
-
-| Symptom | Cause | Solution |
-|---|---|---|
-| No physics at all | Model not in whitelist / missing `.dat` / vertices are all white | Check `[ColorHist]` and `[Dat]` entries in the log |
-| Physics only affects a few points | Only a few vertices were painted | Repaint and verify sufficient `(128,200,255)` vertex counts |
-| Entire model changes color | Using vertex color mode (`datonly=0`) | Switch to `.dat` files (`datonly=1`) |
-| Cloth/hair rotates rigidly with body | Anchor `B` value is too low | Increase `B` up to `255` to disable bone anchoring |
-| Cape/hair stretches excessively | Constraint chain is too long | Use `B=255` + pinned root vertices; reduce Softness (`G`) if needed |
-| Game stutters when vehicle spawns | Every vehicle component created a rig | Only export `.dat` files for parts that actually need physics |
-| Map objects don't move | `mapphysics=0` or object is out of scan range | Set `mapphysics=1` and increase `interactRadius` |
-| Hair/cloth clips through body | Collision radius is too small | Increase `worldRadius` in `vertexphysics.ini` |
-
----
-
-## 12. Known Limitations (Engine-Level)
-
-GTA SA runs on RenderWare 3.7, a **pre-compiled** engine architecture designed in 2004 for PS2 memory budgets:
-
-| Limitation | Reason |
-|---|---|
-| Cannot add new bones | Ped skeletons are allocated at a fixed 32 bones during clump creation; IFP animations store keyframes by fixed bone index |
-| Cannot remove skinning | The ped rendering pipeline assumes `RpSkin` is present on atomics; removing it causes an immediate crash |
-| Cannot import FBX/OBJ at runtime | The engine only includes parsers for DFF, TXD, IFP, and COL |
-| Modifying skin weights causes tearing | `RpSkin` pre-compiles bone index remapping tables at creation; altering weights without rebuilding caches causes desync |
-| Cannot achieve strand-level hair flow | Inherent limitation of vertex-level simulation written back onto rigid bone skinning |
-
-Achieving true multi-strand flowing hair requires a dedicated **bone extender** (a separate engine-level mod), which is outside the scope of this ASI plugin.
-
----
-
-## 13. Performance Tips
-
-| Tip | Reason |
-|---|---|
-| Only export `.dat` files for vehicle parts that need physics | Each `.dat` creates an independent rig, multiplying CPU/memory overhead |
-| Keep map object `maxInstances` between `16~32` | Every active map instance allocates a cloned geometry buffer |
-| Avoid setting `interactRadius` too high | Every building/prop within range will instantiate a physics rig |
-| Keep cloth particle counts under `1,000` | Constraints iterate 12 times per edge every single frame |
-| For very long capes, apply physics only to the outer edges | Keeping inner vertices anchored saves substantial computation |
-| Do not ship final mods using `datonly=0` with large painted areas | Tints model pre-lighting and consumes vertex color data |
-
----
-
-## Appendix: Key Log Prefixes
-
-| Prefix | Meaning |
-|---|---|
-| `[VER_82]` | General physics module prefix |
-| `[Entity]` | Entity processing (peds / vehicles / props) |
-| `[MapPhysics]` / `[MapInst]` | Static map object physics |
-| `[RenderHook]` | Per-instance render hook statistics |
-| `[Dat]` | External `.dat` file loading |
-| `[ColorHist]` | Vertex color classification histogram |
-| `[WeightInherit]` | Unweighted vertices inheriting neighbor bone weights |
-| `[Pinned]` | Pinned anchor vertex statistics |
-| `[BodyGroups]` | Body soft-tissue island grouping |
