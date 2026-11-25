@@ -1,68 +1,34 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
+# --- 构建产物 ---
 build/
-Build/
-build-*/
+build-clean/
+output/
+*.obj
+*.o
+*.lib
+*.exp
+*.ilk
+*.pdb
+*.asi
+compile_all.log
+compile*.log
+preprocessed.i
+NUL.obj
 
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
+# --- 备份/临时 ---
+_rollback_*/
+acl-report/
+src.zip
+src (2).zip
+check.txt
+buildlog.txt
+alsoft_error.txt
+geometry_stream_test.rws
 
-# Temporary files
-*.tmp
-*.log
-*.bak
-*.swp
+# --- Python ---
+__pycache__/
+*.pyc
 
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
+# --- 系统 ---
+Thumbs.db
+desktop.ini
+.DS_Store
