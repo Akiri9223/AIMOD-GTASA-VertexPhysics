@@ -18,5 +18,12 @@
 <img width="480" height="270" alt="2026-11-26 05-32-06" src="https://github.com/user-attachments/assets/f5b9a6ac-c548-4f82-b4e0-4ca4d13c844a" />
 <img width="480" height="270" alt="2026-11-26 05-30-01" src="https://github.com/user-attachments/assets/0d82089f-7081-48cb-ba13-5ea899d2c15f" />
 <img width="480" height="270" alt="2026-11-26 05-35-06" src="https://github.com/user-attachments/assets/1d293d33-1775-4332-91bf-ab8c912d022e" />
+# Hair Physics
+<img width="480" height="270" alt="2026-11-2812-41-34-ezgif com-optimize" src="https://github.com/user-attachments/assets/726adcd3-73f9-4e0b-885a-762561157e91" />
+<img width="480" height="270" alt="2026-11-28 12-40-44" src="https://github.com/user-attachments/assets/f9c243a3-bc80-4ea9-895c-d897846a9980" />
+<img width="480" height="270" alt="2026-11-28 12-40-00" src="https://github.com/user-attachments/assets/9297a83d-59a6-4d9f-b206-4d592459211d" />
+# Body Physics
+<img width="480" height="270" alt="2026-11-28 12-53-22" src="https://github.com/user-attachments/assets/0e72760b-4502-46b2-ab4d-b6577c804ff9" />
+<img width="480" height="270" alt="2026-11-28 12-53-00" src="https://github.com/user-attachments/assets/9e42036f-1f79-4380-b8a0-ff4e76562998" />
 
 
