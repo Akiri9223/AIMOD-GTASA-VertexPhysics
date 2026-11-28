@@ -28,4 +28,6 @@
 <img width="480" height="270" alt="2026-11-28 12-53-22" src="https://github.com/user-attachments/assets/0e72760b-4502-46b2-ab4d-b6577c804ff9" />
 <img width="480" height="270" alt="2026-11-28 12-53-00" src="https://github.com/user-attachments/assets/9e42036f-1f79-4380-b8a0-ff4e76562998" />
 
+# Softbody Physics
+<img width="480" height="270" alt="2026-11-28 13-05-24" src="https://github.com/user-attachments/assets/9164d1d5-1d5e-4397-a6bc-3fcebe830623" />
 
