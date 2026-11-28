@@ -431,6 +431,15 @@ struct GeometryPhysics {
     // 布料用 clothFollow(0)：挂了点就完全不回拉，只靠挂点+约束+重力。
     // 这里设 0 可让头发也变成"自由垂坠"（适合刷成头发的布片）。
     float    hairFollow = 1.0f;
+    float    hairStretch = 1.35f;      // 头发边长最大拉伸倍率
+    float    hairStretchStep = 0.015f; // 每遍最大修正
+    float    clothStretch = 1.35f;     // 布料边长最大拉伸倍率
+    float    clothStretchStep = 0.015f;
+
+    // 头发统一骨骼（ini: hairrigidskin，默认 1）
+    bool     hairRigidSkin = true;
+    std::vector<int> hairPieceBone;   // 片 id → 骨骼索引（每片各自绑骨）
+    int      hairRigidBone = -2;   // -2 = 未解析，-1 = 解析失败
     int      hairBoneIndex = -1;         // 头发统一绑定的骨骼索引
     RwMatrix hairBoneMatPrev{};          // 上一帧该骨骼的世界矩阵
     bool     hairBoneMatValid = false;
@@ -522,6 +531,18 @@ void GeometryPhysics_SetHairRide(float ride, float damping, float pull);
 //   wind   : 0~5，默认 1.0（布料 clothWind=1.8；细长发片想更飘就调大）
 //   follow : 0~1，默认 1.0；设 0 = 挂了点也完全不回拉（与布料 clothFollow 一致）
 void GeometryPhysics_SetHairWindFollow(float wind, float follow);
+
+// 头发统一骨骼（ini: hairrigidskin=1）：整片头发 + 挂点用同一根骨骼矩阵，防止发根拉伸
+void GeometryPhysics_SetHairRigidSkin(int enabled);
+
+// 拉伸上限（ini: hairstretch / hairstretchstep / clothstretch / clothstretchstep）
+void GeometryPhysics_SetStretchLimits(float hairFac, float hairStep, float clothFac, float clothStep);
+
+// 头发抗弯约束开关（ini: hairbend，默认 1）
+void GeometryPhysics_SetHairBend(int enabled);
+
+// 头发惯性参数（ini: hairacc / hairdecay / hairrot）
+void GeometryPhysics_SetHairInertiaParams(float acc, float decay, float rot);
 
 // Body 分组方式（决定"左胸/右胸/腹能不能各往各的方向抖"）
 //   mode   : 0=piece（每个连通片一组，推荐） 1=bone（旧：按主导骨骼） 2=cluster（片内 k-means）

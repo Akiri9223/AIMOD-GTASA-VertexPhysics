@@ -172,6 +172,13 @@ void WorldCollision_SetMapObjectMargin(float margin);
 // 静态建筑（CBuilding）碰撞（ini: buildingcol，默认 1）
 // 按扇区枚举附近建筑，把它们的球/盒/三角面加进障碍（三角形有预算，避免卡顿）
 void WorldCollision_SetBuildingCollision(int enabled);
+void WorldCollision_SetBuildingBoxShallow(int enabled);
+
+// 建筑三角面预算（ini: buildingtris / buildingtrisper）
+void WorldCollision_SetBuildingTriangleBudget(int total, int perBuilding);
+
+// 障碍球/盒总数上限（ini: maxobstacles，默认 400，范围 100~2000）
+void WorldCollision_SetMaxObstacles(int count);
 void WorldCollision_SetBuildingMargin(float margin);
 int  WorldCollision_BuildingTriangleBudget();
 

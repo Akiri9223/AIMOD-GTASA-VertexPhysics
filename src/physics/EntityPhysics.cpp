@@ -2485,6 +2485,26 @@ bool  g_datOnly = true;      // true = 只读外部 .dat，忽略模型自带顶
                     g_mapObjMargin = std::clamp(static_cast<float>(atof(value.c_str())), 0.0f, 0.15f);
                 else if (key == "buildingcol")
                     g_buildingCol = (atoi(value.c_str()) != 0);
+                else if (key == "maxobstacles")
+                {
+                    WorldCollision_SetMaxObstacles(atoi(value.c_str()));
+                }
+                else if (key == "buildingtris" || key == "buildingtrisper")
+                {
+                    static int btTotal = 1600;
+                    static int btPer   = 500;
+
+                    if (key == "buildingtris")
+                        btTotal = atoi(value.c_str());
+                    else
+                        btPer = atoi(value.c_str());
+
+                    WorldCollision_SetBuildingTriangleBudget(btTotal, btPer);
+                }
+                else if (key == "buildingboxshallow")
+                {
+                    WorldCollision_SetBuildingBoxShallow(atoi(value.c_str()) != 0);
+                }
                 else if (key == "buildingmargin")
                     g_buildingMargin = std::clamp(static_cast<float>(atof(value.c_str())), 0.0f, 0.15f);
                 else if (key == "collideradius")
@@ -2555,6 +2575,38 @@ bool  g_datOnly = true;      // true = 只读外部 .dat，忽略模型自带顶
                         hFollow = static_cast<float>(atof(value.c_str()));
 
                     GeometryPhysics_SetHairWindFollow(hWind, hFollow);
+                }
+                else if (key == "hairstretch" || key == "hairstretchstep" ||
+                         key == "clothstretch" || key == "clothstretchstep")
+                {
+                    static float hsF = 1.35f, hsS = 0.015f, csF = 1.35f, csS = 0.015f;
+
+                    const float v = static_cast<float>(atof(value.c_str()));
+
+                    if (key == "hairstretch")          hsF = v;
+                    else if (key == "hairstretchstep") hsS = v;
+                    else if (key == "clothstretch")    csF = v;
+                    else                               csS = v;
+
+                    GeometryPhysics_SetStretchLimits(hsF, hsS, csF, csS);
+                }
+                else if (key == "hairacc" || key == "hairdecay" || key == "hairrot")
+                {
+                    static float hAcc = 12.0f, hDecay = 0.6f, hRot = 1.0f;
+                    const float v = static_cast<float>(atof(value.c_str()));
+                    if (key == "hairacc")        hAcc = v;
+                    else if (key == "hairdecay") hDecay = v;
+                    else                         hRot = v;
+
+                    GeometryPhysics_SetHairInertiaParams(hAcc, hDecay, hRot);
+                }
+                else if (key == "hairbend")
+                {
+                    GeometryPhysics_SetHairBend(atoi(value.c_str()) != 0);
+                }
+                else if (key == "hairrigidskin")
+                {
+                    GeometryPhysics_SetHairRigidSkin(atoi(value.c_str()) != 0);
                 }
                 else if (key == "hairdiag")
                     hairDiag = (atoi(value.c_str()) != 0);
@@ -4056,6 +4108,40 @@ void UpdateEntityPhysics(float deltaTime)
                         }
 
                         ModLog(bd.str());
+                    }
+
+                    // [HairSwing] 每 300 帧：头发粒子离锚点的平均/最大距离
+                    if (rig.hairCount > 0 && (g_frameCounter % 300) == 0)
+                    {
+                        float sum = 0.0f, mx = 0.0f;
+                        int   n = 0, pinned = 0;
+
+                        for (const auto& hp : rig.particles)
+                        {
+                            if (static_cast<PhysType>(hp.typeU32) != PhysType::Hair) continue;
+
+                            const float dx = hp.posWorld.x - hp.anchorWorld.x;
+                            const float dy = hp.posWorld.y - hp.anchorWorld.y;
+                            const float dz = hp.posWorld.z - hp.anchorWorld.z;
+
+                            const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+                            sum += d;
+                            if (d > mx) mx = d;
+                            if (!hp.pins.empty()) ++pinned;
+                            ++n;
+                        }
+
+                        if (n > 0)
+                        {
+                            std::ostringstream sw;
+                            sw << std::fixed << std::setprecision(1);
+                            sw << "[HairSwing] modelId=" << candidate.modelIndex
+                               << " n=" << n << " pinned=" << pinned
+                               << " meanLag=" << (sum / n * 1000.0f) << "mm"
+                               << " maxLag=" << (mx * 1000.0f) << "mm";
+                            ModLog(sw.str());
+                        }
                     }
 
                     // ------------------------------------------------------------

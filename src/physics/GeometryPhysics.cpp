@@ -709,6 +709,20 @@ namespace
     float g_hairPull    = 1.0f;
     float g_hairWind    = 1.0f;   // ini: hairwind
     float g_hairFollow  = 1.0f;   // ini: hairfollow
+
+    // 拉伸上限（ini: hairstretch / hairstretchstep / clothstretch / clothstretchstep）
+    bool  g_hairBend        = true;    // ini: hairbend
+    float g_hairAcc         = 12.0f;   // ini: hairacc（伪惯性上限 m/s²）
+    float g_hairDecay       = 0.6f;    // ini: hairdecay（冲量衰减）
+    float g_hairRot         = 1.0f;    // ini: hairrot（旋转跟随 0~1）
+    float g_hairStretch     = 1.35f;
+    float g_hairStretchStep = 0.015f;
+    float g_clothStretch     = 1.35f;
+    float g_clothStretchStep = 0.015f;
+    // 头发统一骨骼（ini: hairrigidskin，默认 1）
+    //   1 = 整片头发 + 挂点都用同一根骨骼的矩阵（刚性，绝不拉伸）
+    //   0 = 逐顶点混合（跟引擎蒙皮一致，但权重不一致时会拉扯）
+    int   g_hairRigidSkin = 1;
     bool g_hairWorldCollide       = true;
     bool g_hairDiagnostics        = true;
 }
@@ -728,6 +742,71 @@ void SetHairDebugOptions(int pinsEnabled, int capsuleMaskEnabled,
     g_hairDiagnostics        = (diagnostics != 0);
 }
 
+
+// 抗弯约束：给"同一顶点两侧的邻居"之间补一条刚性距离约束。
+// 只在初始化时调用一次（由 InitGeometryPhysics 末尾调用），
+// 带安全上限，避免约束数量失控拖垮求解。
+static void AddHairBendConstraints(GeometryPhysics& rig)
+{
+    if (!g_hairBend) return;
+    if (rig.particles.empty()) return;
+
+    constexpr size_t kMaxBend = 20000;
+    constexpr size_t kMaxTotal = 60000;
+
+    if (rig.constraints.size() >= kMaxTotal) return;
+
+    std::vector<std::vector<int>> nb(rig.particles.size());
+
+    for (const auto& c : rig.constraints)
+    {
+        if (c.a >= 0 && c.a < static_cast<int>(nb.size()) &&
+            c.b >= 0 && c.b < static_cast<int>(nb.size()))
+        {
+            nb[c.a].push_back(c.b);
+            nb[c.b].push_back(c.a);
+        }
+    }
+
+    size_t added = 0;
+
+    for (size_t i = 0; i < nb.size() && added < kMaxBend; ++i)
+    {
+        if (static_cast<PhysType>(rig.particles[i].typeU32) != PhysType::Hair) continue;
+        if (nb[i].size() < 2) continue;
+
+        for (size_t x = 0; x + 1 < nb[i].size() && added < kMaxBend; ++x)
+        {
+            for (size_t y = x + 1; y < nb[i].size() && added < kMaxBend; ++y)
+            {
+                const int a = nb[i][x];
+                const int b = nb[i][y];
+
+                if (a == b) continue;
+                if (static_cast<PhysType>(rig.particles[a].typeU32) != PhysType::Hair) continue;
+                if (static_cast<PhysType>(rig.particles[b].typeU32) != PhysType::Hair) continue;
+
+                const float rl = V3Len(V3Sub(rig.particles[a].restLocal,
+                                             rig.particles[b].restLocal));
+
+                if (rl < 1e-4f || rl > 0.5f) continue;
+
+                VertexConstraint c;
+                c.a = a;
+                c.b = b;
+                c.restLength = rl;
+                c.stiffness = 0.25f;
+
+                rig.constraints.push_back(c);
+                ++added;
+            }
+        }
+    }
+
+    std::ostringstream bb;
+    bb << "[HairBend] added=" << added << " total=" << rig.constraints.size();
+    GeoPhysLog(bb.str());
+}
 
 bool InitGeometryPhysics(
     GeometryPhysics& rig,
@@ -786,6 +865,13 @@ bool InitGeometryPhysics(
     rig.hairPull    = std::clamp(g_hairPull, 0.0f, 3.0f);
     rig.hairWind    = std::clamp(g_hairWind, 0.0f, 5.0f);
     rig.hairFollow  = std::clamp(g_hairFollow, 0.0f, 1.0f);
+    rig.hairStretch     = std::clamp(g_hairStretch, 1.0f, 3.0f);
+    rig.hairStretchStep = std::clamp(g_hairStretchStep, 0.001f, 0.10f);
+    rig.clothStretch     = std::clamp(g_clothStretch, 1.0f, 3.0f);
+    rig.clothStretchStep = std::clamp(g_clothStretchStep, 0.001f, 0.10f);
+
+    // 头发统一骨骼（P：修"靠近发根的头发被向后拉伸"）
+    rig.hairRigidSkin = (g_hairRigidSkin != 0);
 
     if (!geometry || !geometry->morphTarget || geometry->numMorphTargets <= 0)
     {
@@ -1684,17 +1770,25 @@ bool InitGeometryPhysics(
                 }
 
                 // 记录这个 Rigid 顶点自己的骨骼权重
+                // 2026-11-27：必须和粒子侧一样支持"8 位骨骼索引"。
+                // 之前这里永远按 u32 读，8 位蒙皮模型的 idx 全部越界 →
+                // pin.bones/weights 保持默认 → 挂点目标退化，挂点密集的布片被拉偏。
                 if (skinWeights && skinIndices && boneCount > 0)
                 {
                     const RwMatrixWeights& w = skinWeights[rigidVertex];
-                    const RwUInt32* idx = skinIndices + static_cast<size_t>(rigidVertex) * 4;
                     const float wArr[4] = { w.w0, w.w1, w.w2, skinSplit ? 0.0f : w.w3 };
+
+                    const RwUInt32* idx32 = skinIndices + static_cast<size_t>(rigidVertex) * 4;
+                    const RwUInt8*  idx8  = reinterpret_cast<const RwUInt8*>(skinIndices)
+                                          + static_cast<size_t>(rigidVertex) * 4;
 
                     for (int kk = 0; kk < 4; ++kk)
                     {
-                        if (wArr[kk] > 1e-6f && idx[kk] < boneCount)
+                        const RwUInt32 boneIdx = indicesU8 ? idx8[kk] : idx32[kk];
+
+                        if (wArr[kk] > 1e-6f && boneIdx < boneCount)
                         {
-                            pin.bones[kk] = static_cast<int>(idx[kk]);
+                            pin.bones[kk] = static_cast<int>(boneIdx);
                             pin.weights[kk] = wArr[kk];
                         }
                     }
@@ -1724,6 +1818,7 @@ bool InitGeometryPhysics(
         auto addOpposite = [&](int a, int b, int c)
         {
             if (a < 0 || b < 0 || c < 0) return;
+
 
             if (a > b) std::swap(a, b);
 
@@ -2714,6 +2809,24 @@ bool InitGeometryPhysics(
         }
     }
 
+    {
+        std::ostringstream hc;
+        hc << std::fixed << std::setprecision(3);
+        hc << "[HairCfg] ride=" << rig.hairRide
+           << " damp=" << rig.hairDamping
+           << " pull=" << rig.hairPull
+           << " follow=" << rig.hairFollow
+           << " acc=" << g_hairAcc
+           << " decay=" << g_hairDecay
+           << " rot=" << g_hairRot
+           << " rigidSkin=" << (rig.hairRigidSkin ? 1 : 0)
+           << " bend=" << (g_hairBend ? 1 : 0)
+           << " pieces=" << rig.pieces.size();
+        GeoPhysLog(hc.str());
+    }
+
+    AddHairBendConstraints(rig);
+
     rig.initialized = true;
 
     std::ostringstream oss;
@@ -3572,6 +3685,86 @@ void StepGeometryPhysics(
     }
 
     // 锚点 = 顶点在"当前骨骼姿态"下的世界位置（与引擎蒙皮完全一致）
+    // ------------------------------------------------------------
+    // 头发"统一骨骼"解析（2026-11-26）
+    //
+    // 4.4 修好 8 位骨骼索引后，头发开始出现"靠近发根的一段被向后拉伸"：
+    // 因为每个发丝顶点现在按**自己的**权重混合骨骼矩阵，发根附近几个顶点
+    // 的权重分布不同（有的偏 Head、有的偏 Neck/Spine），角色一移动，
+    // 相邻顶点的锚点就按不同骨骼走 → 它们之间的间距被拉开 = 拉伸。
+    //
+    // 4.3 之前之所以"正常"，恰恰是因为索引读错、所有权重都无效，
+    // 整片头发退回原子矩阵（刚性整片跟随），所以不会拉扯。
+    //
+    // 这里恢复"整片刚性"的行为，但用**正确的骨骼**：对整片头发投票，
+    // 选出权重总和最大的那根骨骼，所有发丝粒子 + 全部挂点都用它的矩阵。
+    // 单骨骼矩阵是正交的，长度守恒，不可能把位移放大。
+    // ------------------------------------------------------------
+    if (rig.hairRigidSkin && haveSkinAnchor && rig.hairPieceBone.empty())
+    {
+        rig.hairPieceBone.assign(rig.pieces.size(), -1);
+
+        for (size_t pi = 0; pi < rig.pieces.size(); ++pi)
+        {
+            if (rig.pieces[pi].hairCount <= 0) continue;
+
+            std::map<int, float> votes;
+            RwV3d centroid = { 0.0f, 0.0f, 0.0f };
+            int   cnt = 0;
+
+            for (const auto& bp : rig.particles)
+            {
+                if (bp.pieceId != static_cast<int>(pi)) continue;
+                if (static_cast<PhysType>(bp.typeU32) != PhysType::Hair) continue;
+
+                for (int k = 0; k < 4; ++k)
+                {
+                    const int b = bp.bones[k];
+                    if (b < 0 || b >= static_cast<int>(maxBone)) continue;
+                    if (bp.weights[k] <= 0.0f) continue;
+                    votes[b] += bp.weights[k];
+                }
+
+                centroid = V3Add(centroid, bp.anchorWorld);
+                ++cnt;
+            }
+
+            int   bone  = -1;
+            float bestW = 0.0f;
+            const char* via = "vote";
+
+            for (const auto& kv : votes)
+                if (kv.second > bestW) { bestW = kv.second; bone = kv.first; }
+
+            if (bone < 0 && cnt > 0 && hierarchy)
+            {
+                via = "nearest";
+                centroid = V3Scale(centroid, 1.0f / static_cast<float>(cnt));
+
+                float bestD = 1e30f;
+
+                for (RwInt32 i = 0; i < hierarchy->numNodes; ++i)
+                {
+                    const float dx = boneMatrices[i].pos.x - centroid.x;
+                    const float dy = boneMatrices[i].pos.y - centroid.y;
+                    const float dz = boneMatrices[i].pos.z - centroid.z;
+                    const float d2 = dx * dx + dy * dy + dz * dz;
+
+                    if (d2 < bestD) { bestD = d2; bone = i; }
+                }
+            }
+
+            rig.hairPieceBone[pi] = bone;
+
+            std::ostringstream pb;
+            pb << "[PieceBind] piece=" << pi
+               << " hair=" << rig.pieces[pi].hairCount
+               << " bone=" << bone << " via=" << via;
+            GeoPhysLog(pb.str());
+        }
+    }
+
+
     int placedCount = 0;
     int blendFallbacks = 0;
     int fallbackSamples[3] = { -1, -1, -1 };
@@ -3581,8 +3774,26 @@ void StepGeometryPhysics(
         RwMatrix blended;
         bool usedFallback = false;
 
-        if (haveSkinAnchor &&
-            BuildVertexMatrix(boneMatrices, inverseBinds, p, maxBone, blended, &usedFallback))
+        // 每片头发用各自的骨骼（2026-11-27）：尾巴片会绑到尾骨，而不是头骨
+        const int pieceBone =
+            (p.pieceId >= 0 && p.pieceId < static_cast<int>(rig.hairPieceBone.size()))
+                ? rig.hairPieceBone[p.pieceId] : -1;
+
+        const bool hairRigid =
+            rig.hairRigidSkin &&
+            static_cast<PhysType>(p.typeU32) == PhysType::Hair &&
+            pieceBone >= 0 &&
+            pieceBone < static_cast<int>(maxBone);
+
+        if (hairRigid)
+        {
+            RwMatrixMultiply(&blended,
+                &inverseBinds[pieceBone], &boneMatrices[pieceBone]);
+        }
+
+        if (hairRigid ||
+            (haveSkinAnchor &&
+             BuildVertexMatrix(boneMatrices, inverseBinds, p, maxBone, blended, &usedFallback)))
         {
             p.anchorWorld = TransformPoint(blended, p.restLocal);
 
@@ -3590,6 +3801,13 @@ void StepGeometryPhysics(
             // 不能借用物理顶点的矩阵（两者权重可能完全不同）
             for (auto& pin : p.pins)
             {
+                if (hairRigid)
+                {
+                    // 统一骨骼：挂点也用同一矩阵，保证发根与发丝不会相对漂移
+                    pin.targetWorld = TransformPoint(blended, pin.restLocal);
+                    continue;
+                }
+
                 VertexParticle tmp;
                 tmp.restLocal = pin.restLocal;
 
@@ -4599,12 +4817,14 @@ void StepGeometryPhysics(
                 // 真正的滞后交给下面的伪加速度。
                 if (haveHairRotDelta)
                 {
-                    const RwV3d relNow =
-                        TransformDir(hairRotDelta, V3Sub(p.posWorld, p.anchorWorld));
+                    const RwV3d relCur = V3Sub(p.posWorld, p.anchorWorld);
+                    const RwV3d relRot = TransformDir(hairRotDelta, relCur);
+                    const RwV3d relNow = V3Add(relCur, V3Scale(V3Sub(relRot, relCur), g_hairRot));
                     p.posWorld = V3Add(p.anchorWorld, relNow);
 
-                    const RwV3d relPrev =
-                        TransformDir(hairRotDelta, V3Sub(p.prevWorld, p.anchorPrevWorld));
+                    const RwV3d relPrevCur = V3Sub(p.prevWorld, p.anchorPrevWorld);
+                    const RwV3d relPrevRot = TransformDir(hairRotDelta, relPrevCur);
+                    const RwV3d relPrev = V3Add(relPrevCur, V3Scale(V3Sub(relPrevRot, relPrevCur), g_hairRot));
                     p.prevWorld = V3Add(p.anchorPrevWorld, relPrev);
                 }
 
@@ -4665,8 +4885,8 @@ void StepGeometryPhysics(
                                 V3Scale(V3Sub(aRaw, p.frameAccSmooth), 0.5f));
                         }
 
-                        constexpr float kMaxPseudoAccel = 12.0f;   // m/s²
-                        constexpr float kImpulseDecay   = 0.6f;    // 用掉之后衰减
+                        const float kMaxPseudoAccel = g_hairAcc;   // m/s²
+                        const float kImpulseDecay = g_hairDecay;    // 用掉之后衰减
 
                         const float alen = V3Len(p.frameAccSmooth);
 
@@ -5063,7 +5283,14 @@ void StepGeometryPhysics(
                 auto& A = rig.particles[c.a];
                 auto& B = rig.particles[c.b];
 
-                const float limit = c.restLength * 1.35f;
+                const bool hairEdge =
+                    static_cast<PhysType>(A.typeU32) == PhysType::Hair &&
+                    static_cast<PhysType>(B.typeU32) == PhysType::Hair;
+
+                const float stretchFac  = hairEdge ? rig.hairStretch : rig.clothStretch;
+                const float stretchStep = hairEdge ? rig.hairStretchStep : rig.clothStretchStep;
+
+                const float limit = c.restLength * stretchFac;
 
                 RwV3d d = V3Sub(B.posWorld, A.posWorld);
                 const float len = V3Len(d);
@@ -5077,7 +5304,7 @@ void StepGeometryPhysics(
                 if (ws <= 1e-6f) continue;
 
                 // 每次最多修正 15mm：以前"一步把顶点拽走 30cm"会变成可见的弹跳
-                const float excess = std::min(len - limit, 0.015f);
+                const float excess = std::min(len - limit, stretchStep);
                 const RwV3d dir = V3Scale(d, 1.0f / len);
 
                 A.posWorld = V3Add(A.posWorld, V3Scale(dir, excess * (wa / ws)));
@@ -6454,3 +6681,30 @@ void GeometryPhysics_SetHairRide(float ride, float damping, float pull)
     g_hairPull    = std::clamp(pull, 0.0f, 3.0f);
 }
 
+// 头发统一骨骼（ini: hairrigidskin，1 = 整片刚性随动，0 = 逐顶点混合）
+void GeometryPhysics_SetHairRigidSkin(int enabled)
+{
+    g_hairRigidSkin = (enabled != 0);
+}
+
+// 拉伸上限（ini: hairstretch/hairstretchstep/clothstretch/clothstretchstep）
+void GeometryPhysics_SetStretchLimits(float hairFac, float hairStep, float clothFac, float clothStep)
+{
+    g_hairStretch      = std::clamp(hairFac, 1.0f, 3.0f);
+    g_hairStretchStep  = std::clamp(hairStep, 0.001f, 0.10f);
+    g_clothStretch     = std::clamp(clothFac, 1.0f, 3.0f);
+    g_clothStretchStep = std::clamp(clothStep, 0.001f, 0.10f);
+}
+
+void GeometryPhysics_SetHairBend(int enabled)
+{
+    g_hairBend = (enabled != 0);
+}
+
+// 头发惯性参数（ini: hairacc / hairdecay / hairrot）
+void GeometryPhysics_SetHairInertiaParams(float acc, float decay, float rot)
+{
+    g_hairAcc   = std::clamp(acc, 0.0f, 60.0f);
+    g_hairDecay = std::clamp(decay, 0.0f, 1.0f);
+    g_hairRot   = std::clamp(rot, 0.0f, 1.0f);
+}

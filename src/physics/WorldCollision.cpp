@@ -310,7 +310,7 @@ constexpr int kCapsuleStaleCollects = 90;
         return result;
     }
 
-    constexpr int   kMaxObstacles = 400;
+    int             g_maxObstacles = 400;   // 障碍球/盒总数上限（ini: maxobstacles）
 
     // 三角面总预算。2026-11-23 07:5x：
     // "自己物件的 col model" 经常上千个面（test.col 有 1152），
@@ -372,7 +372,7 @@ constexpr int kCapsuleStaleCollects = 90;
     bool  g_buildingCol = true;
     float g_buildingMargin = 0.02f;
     int   g_buildingTriBudget = 1600;   // 一次 Collect 内所有建筑合计
-    constexpr int kPerBuildingTris = 500;   // 单栋上限（一堵墙通常 100~300 面）
+    int   g_buildingTrisPer   = 500;    // 单栋上限（ini: buildingtrisper，一堵墙通常 100~300 面）
 
     // 最近一次建筑收集的计数（诊断用，由 EntityPhysics 打印）
     WorldBuildingStats g_bldStats{};
@@ -382,6 +382,11 @@ constexpr int kCapsuleStaleCollects = 90;
     // "只修正浅穿透"的深度上限（米）：再深就不认为是"刚穿进去"，
     // 而是布料本来就长在物件里（挂点/旗杆附近），不能硬推。
     constexpr float kShallowDepth = 0.15f;
+
+    // 建筑 col 球/盒是否只修"浅穿透"（ini: buildingboxshallow，默认 1）
+    // 楼梯/走廊的 col 常是一整块大盒子，布料深陷进去时"往最近的面推出"
+    // 会把人甩到上/侧面。开启后深于 kShallowDepth 的穿透直接忽略。
+    int  g_buildingBoxShallow = 1;
 
     // "自己物件的网格碰撞体"专用的 skin（米）。
     // 2026-11-23 08:2x：不再固定 4cm，而是按布料网格分辨率自适应
@@ -406,7 +411,7 @@ constexpr int kCapsuleStaleCollects = 90;
                      float lmaxx, float lmaxy, float lmaxz,
                      float vx, float vy, float vz, int shallowOnly, int modelId)
     {
-        if (static_cast<int>(g_obstacles.size()) >= kMaxObstacles) return;
+        if (static_cast<int>(g_obstacles.size()) >= g_maxObstacles) return;
 
         if (lmaxx - lminx <= 0.001f ||
             lmaxy - lminy <= 0.001f ||
@@ -446,7 +451,7 @@ constexpr int kCapsuleStaleCollects = 90;
     void AddSphereWorld(float cx, float cy, float cz, float radius,
                         float vx, float vy, float vz, int shallowOnly, int modelId)
     {
-        if (static_cast<int>(g_obstacles.size()) >= kMaxObstacles) return;
+        if (static_cast<int>(g_obstacles.size()) >= g_maxObstacles) return;
         if (radius <= 0.001f) return;
 
         Obstacle o;
@@ -647,7 +652,7 @@ constexpr int kCapsuleStaleCollects = 90;
 
     void AddEntity(CEntity* entity, const RwV3d& center, float radius)
     {
-        if (!entity || static_cast<int>(g_obstacles.size()) >= kMaxObstacles) return;
+        if (!entity || static_cast<int>(g_obstacles.size()) >= g_maxObstacles) return;
 
         // 按实体指针判断"自己"：
         //   人物(ped) 必须排除 —— 身体由骨胶囊代表，否则会自己顶自己；
@@ -1010,7 +1015,7 @@ constexpr int kCapsuleStaleCollects = 90;
 
                     for (int i = 0; i < data->m_nNumSpheres; ++i)
                     {
-                        if (static_cast<int>(g_obstacles.size()) >= kMaxObstacles) break;
+                        if (static_cast<int>(g_obstacles.size()) >= g_maxObstacles) break;
 
                         const CSphere& s = data->m_pSpheres[i];
                         if (s.m_fRadius <= 0.01f) continue;
@@ -1024,7 +1029,7 @@ constexpr int kCapsuleStaleCollects = 90;
 
                     for (int i = 0; i < data->m_nNumBoxes; ++i)
                     {
-                        if (static_cast<int>(g_obstacles.size()) >= kMaxObstacles) break;
+                        if (static_cast<int>(g_obstacles.size()) >= g_maxObstacles) break;
 
                         const CBox& b2 = data->m_pBoxes[i];
 
@@ -1042,6 +1047,16 @@ constexpr int kCapsuleStaleCollects = 90;
                     {
                         for (size_t k = obStart; k < g_obstacles.size(); ++k)
                             g_obstacles[k].grow = g_buildingMargin;
+                    }
+
+                    // 深穿透保护（ini: buildingboxshallow，默认 1）。
+                    // 楼梯/走廊的 col 常常是**一整块大盒子**；布料陷进去十几厘米时，
+                    // "往最近的面推出"会选到上/侧面 → 披风被莫名甩向上方或一侧。
+                    // 开启后，深于 kShallowDepth 的穿透直接忽略（交给三角面挡）。
+                    if (g_buildingBoxShallow && g_obstacles.size() > obStart)
+                    {
+                        for (size_t k = obStart; k < g_obstacles.size(); ++k)
+                            g_obstacles[k].shallowOnly = 1;
                     }
 
                     dObs += static_cast<int>(g_obstacles.size() - obStart);
@@ -1064,7 +1079,7 @@ constexpr int kCapsuleStaleCollects = 90;
                         const int before  = static_cast<int>(g_triangles.size());
                         const int capSave = g_trianglesCap;
 
-                        const int perBuilding = std::min(kPerBuildingTris, triBudget);
+                        const int perBuilding = std::min(g_buildingTrisPer, triBudget);
 
                         g_trianglesCap = std::min(capSave, before + perBuilding);
 
@@ -1129,7 +1144,7 @@ constexpr int kCapsuleStaleCollects = 90;
                         const bool lowPoly  = (trisThis <= 16 && longDim > 0.5f);
 
                         if ((slabLike || lowPoly) &&
-                            static_cast<int>(g_obstacles.size()) < kMaxObstacles)
+                            static_cast<int>(g_obstacles.size()) < g_maxObstacles)
                         {
                             Obstacle o;
                             o.kind = Obstacle::Kind::Box;
@@ -1881,6 +1896,22 @@ bool SegmentHitsTriangle(const WorldTriangle& t,
     outT = tHit;
     entrySign = (det > 0.0f) ? 1.0f : -1.0f;
     return true;
+}
+
+void WorldCollision_SetMaxObstacles(int count)
+{
+    g_maxObstacles = std::clamp(count, 100, 2000);
+}
+
+void WorldCollision_SetBuildingTriangleBudget(int total, int perBuilding)
+{
+    g_buildingTriBudget = std::clamp(total, 0, 8000);
+    g_buildingTrisPer   = std::clamp(perBuilding, 0, 2000);
+}
+
+void WorldCollision_SetBuildingBoxShallow(int enabled)
+{
+    g_buildingBoxShallow = (enabled != 0);
 }
 
 void WorldCollision_SetOwnColSkin(float skin)
