@@ -9,6 +9,10 @@
 
 顶点色规则：R=64 头发 / R=128 布料 / R=192 身体 / R=254 软体/ 未着色=刚性，G=软度，B=锚定强度（B=0 为硬锚定）；
 
+# 模型适配教程
+https://www.youtube.com/watch?v=SlUFVi4wcgw&t=313s
+https://www.bilibili.com/video/BV1RPWB64EPN/
+
 # Cloth Physics
 <img width="480" height="270" alt="2026-11-2605-34-15-ezgif com-optimize" src="https://github.com/user-attachments/assets/3b675547-c9da-477b-9369-6f86cad04125" />
 <img width="480" height="270" alt="2026-11-2605-30-50-ezgif com-optimize" src="https://github.com/user-attachments/assets/3865526a-39e7-4e47-9961-2b28aab0b620" />
